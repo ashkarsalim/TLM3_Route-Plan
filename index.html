@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Last-Mile Route Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f2f5f6;--panel:#fff;--ink:#14212b;--mut:#5b6873;--line:#d5dde2;--acc:#0a6b6b;--accbg:#dff1f0;--warn:#a35200;--warnbg:#fdeccf;--bad:#b42318;--badbg:#fde2df;--ok:#19773f;--okbg:#dcf3e4;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10181d;--panel:#18232a;--ink:#e6edf1;--mut:#93a3ae;--line:#2b3a43;--acc:#4fc3bf;--accbg:#173a3a;--warn:#f0b35f;--warnbg:#3b2a10;--bad:#ff9a8f;--badbg:#431c18;--ok:#7dd99c;--okbg:#153a25}}
+:root[data-theme="dark"]{--bg:#10181d;--panel:#18232a;--ink:#e6edf1;--mut:#93a3ae;--line:#2b3a43;--acc:#4fc3bf;--accbg:#173a3a;--warn:#f0b35f;--warnbg:#3b2a10;--bad:#ff9a8f;--badbg:#431c18;--ok:#7dd99c;--okbg:#153a25}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Public Sans",system-ui,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:0 0 8px}
+.sub{color:var(--mut);margin:0 0 14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:3px}
+input,select,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+input[type=number]{width:70px}
+button{cursor:pointer;background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+.kpi b{display:block;font-size:22px}.kpi span{color:var(--mut);font-size:12px}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+td.w{white-space:normal;min-width:180px}
+th{color:var(--mut);font-weight:600}.n{text-align:right}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600}
+.ok{background:var(--okbg);color:var(--ok)}.wn{background:var(--warnbg);color:var(--warn)}.bd{background:var(--badbg);color:var(--bad)}.ac{background:var(--accbg);color:var(--acc)}
+.note{color:var(--mut);font-size:12px;margin:6px 0 0}
+.empty{text-align:center;padding:40px 10px;color:var(--mut)}
+details summary{cursor:pointer;font-weight:600}
+</style></head><body><main>
+<h1>Last-mile route planner</h1>
+<p class="sub">All routes start at Umm Ramool. Dubai is a controlled pool; nothing moves across emirates on its own.</p>
+<div class="panel"><div class="bar">
+<label>Workbook (.xlsx / .csv)<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
+<label>Date<select id="date"></select></label>
+<label>Plan<select id="mode"><option value="strict">Strict caps</option><option value="flex">Flexible (+tolerance)</option></select></label>
+<label>Max stops<input id="cs" type="number" value="40" min="1"></label>
+<label>Max orders<input id="co" type="number" value="45" min="1"></label>
+<label>Flex %<input id="cf" type="number" value="10" min="0"></label>
+<button id="exp" disabled>Export route plan</button>
+</div><p class="note" id="msg">Upload the September workbook or a daily file with the same columns. Sheets named "DA List" are read as the roster.</p></div>
+<div id="out"><div class="panel empty">No file loaded yet.</div></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const EM={dubai:'Dubai',deira:'Dubai',sharjah:'Sharjah',ajman:'Ajman','al ain':'Al Ain',alain:'Al Ain','abu dhabi':'Abu Dhabi',abudhabi:'Abu Dhabi','abu dhabhi':'Abu Dhabi','ras al khaimah':'RAK','ras al khaima':'RAK',rak:'RAK',fujairah:'Fujairah','umm al quwain':'UAQ','umm ul quwain':'UAQ','umm al-quwain':'UAQ'};
+const ZP={DXB:'Dubai',TDXB:'Dubai',SHJ:'Sharjah',AJM:'Ajman',UMQ:'UAQ',RAK:'RAK',FUJ:'Fujairah',AUH:'Abu Dhabi',LAIN:'Al Ain'};
+const PFX={Dubai:'DXB',Sharjah:'SHJ',Ajman:'AJM',UAQ:'UAQ','Al Ain':'AIN','Abu Dhabi':'AUH',RAK:'RAK',Fujairah:'FUJ'};
+const POOLS=Object.keys(PFX);
+const ADJ={Sharjah:['Ajman','Fujairah*'],Ajman:['Sharjah','UAQ','Fujairah*'],UAQ:['Ajman'],Fujairah:['Sharjah*','Ajman*']};
+const FUJ=/kalba|khor\s?fakkan|khorfakkan|dibba|كلباء|خورفكان/i;
+const norm=s=>EM[String(s||'').toLowerCase().replace(/\s+/g,' ').trim()]||EM[String(s||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ').trim()];
+const nk=s=>String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]+/g,' ').trim();
+const zoneOf=a=>{const m=/([A-Za-z]{2,4})\s*-\s*ZONE\s*-\s*(\d+)/i.exec(a||'');return m?m[1].toUpperCase()+'-'+(+m[2]):''};
+let WB=null,T=[],DA=[],ST={},BLANK=0,LAST=null,DLN=null;
+if(window.claude&&claude.use)claude.use('downloads').then(x=>{DLN=x}).catch(()=>{});
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=x=>{try{WB=XLSX.read(x.target.result,{type:'array',cellDates:true});parse()}catch(err){$('msg').textContent='Could not read file: '+err.message}};r.readAsArrayBuffer(f)};
+['date','mode','cs','co','cf'].forEach(i=>$(i).onchange=()=>run());
+const dstr=v=>Object.prototype.toString.call(v)==='[object Date]'?new Date(v.getTime()+12*36e5).toISOString().slice(0,10):String(v||'').slice(0,10);
+function sheet(n){return XLSX.utils.sheet_to_json(WB.Sheets[n],{header:1,raw:true,defval:''})}
+function parse(){
+ const names=WB.SheetNames,dn=names.find(n=>!/da\s*list/i.test(n)),an=names.find(n=>/da\s*list/i.test(n));
+ const rows=sheet(dn),h=rows[0].map(x=>String(x).trim().toLowerCase()),c=k=>h.indexOf(k);
+ const I={d:c('date'),ch:c('channel'),ot:c('order type'),oid:c('order id'),awb:c('awb'),sel:c('seller name'),sa:c('supplier address'),pc:c('pickup city'),ss:c('supplier state'),bn:c('buyer name'),ba:c('buyer address'),bc:c('buyer city'),bs:c('buyer state')};
+ const miss=Object.entries(I).filter(([k,v])=>v<0).map(([k])=>k);
+ if(miss.length){$('msg').textContent='Missing columns: '+miss.join(', ');return}
+ BLANK=0;const R=[];
+ for(const r of rows.slice(1)){if(!r[I.awb]||!r[I.d]){BLANK++;continue}R.push(r)}
+ const seen={};R.sort((a,b)=>dstr(a[I.d]).localeCompare(dstr(b[I.d])));T=[];
+ for(const r of R){
+  const d=dstr(r[I.d]),awb=r[I.awb];(seen[awb]=seen[awb]||[]);if(!seen[awb].includes(d))seen[awb].push(d);
+  const att=seen[awb].indexOf(d)+1,ot=String(r[I.ot]),pd=/pickup and delivery/i.test(ot),pk=/^pickup$/i.test(ot);
+  const base={d,awb,oid:r[I.oid],ch:r[I.ch],ot,att};
+  if(pk||pd){const sp=norm(r[I.ss])||norm(r[I.pc]);T.push({...base,kind:'P',pool:sp,zone:'',area:r[I.pc]||r[I.sel],addr:r[I.sa],name:r[I.sel],pd,flag:''})}
+  if(!pk){
+   const z=zoneOf(r[I.ba]),zp=z?ZP[z.split('-')[0]]:null;let p=norm(r[I.bs])||zp,flag='';
+   if(p&&zp&&p!==zp&&!(zp==='Fujairah'&&(p==='Sharjah'||p==='Ajman')))flag='Zone '+z+' vs state '+p;
+   if((p==='Sharjah'||p==='Ajman')&&(zp==='Fujairah'||FUJ.test(r[I.bc]+' '+r[I.ba])))p='Fujairah';
+   T.push({...base,kind:'D',pool:p,zone:z,area:r[I.bc],addr:r[I.ba],name:r[I.bn],pd,flag})}
+ }
+ DA=[];ST={};
+ if(an)for(const r of sheet(an).slice(1)){if(!r[1])continue;const em=/abu dhabi/i.test(r[0])?'Abu Dhabi':norm(r[0])||String(r[0]);DA.push({em,name:r[1],vendor:r[2],kind:/pickup/i.test(r[1])?'P':'D',shared:/abu dhabi.*al ?ain/i.test(r[0])});ST[r[1]]='active'}
+ const ds=[...new Set(T.map(t=>t.d))].sort();
+ $('date').innerHTML=ds.map(d=>`<option>${d}</option>`).join('');$('date').value=ds[ds.length-1];
+ $('msg').textContent=`${R.length.toLocaleString()} order rows, ${ds.length} dates, ${DA.length} DAs on roster. ${BLANK} blank rows skipped.`;
+ run();
+}
+const pack=(arr,cs,co)=>{const out=[];let cur=null;for(const s of arr){if(cur&&(cur.stops.length+1>cs||cur.orders+s.tasks.length>co)){out.push(cur);cur=null}if(!cur)cur={stops:[],orders:0};cur.stops.push(s);cur.orders+=s.tasks.length}if(cur)out.push(cur);return out};
+function run(){
+ if(!T.length)return;
+ const d=$('date').value,mode=$('mode').value,cs=+$('cs').value,co=+$('co').value,f=+$('cf').value/100;
+ const fs=Math.floor(cs*(1+f)),fo=Math.floor(co*(1+f));
+ const G={},ex=[];
+ for(const t of T.filter(t=>t.d===d)){
+  const add=why=>ex.push({t,why});
+  if(!t.pool){add('Emirate could not be resolved');continue}
+  if(t.flag)add(t.flag+' - planned by state, review');
+  if(t.att>3)add('Attempt '+t.att+' exceeds 3');
+  if(!String(t.addr||'').trim())add('Missing address');
+  const gk=t.pool+'|'+t.kind;const g=G[gk]=G[gk]||{pool:t.pool,kind:t.kind,m:new Map()};
+  const key=t.kind+'|'+(nk(t.addr)||nk(t.name)||t.awb);let s=g.m.get(key);
+  if(!s){s={key,zone:t.zone,area:String(t.area||''),tasks:[]};g.m.set(key,s)}s.tasks.push(t);
+ }
+ const routes=[],sum=[],over=[];
+ for(const pool of POOLS)for(const kind of['D','P']){
+  const g=G[pool+'|'+kind];if(!g)continue;
+  const arr=[...g.m.values()].sort((a,b)=>(a.zone||'~').localeCompare(b.zone||'~')||a.area.localeCompare(b.area));
+  const st=pack(arr,cs,co),fl=pack(arr,fs,fo),use=mode==='flex'?fl:st;
+  const av=DA.filter(a=>(a.em===pool||(pool==='Al Ain'&&false))&&a.kind===kind&&ST[a.name]!=='backup_off'&&ST[a.name]!=='backup_on'?true:(a.em===pool&&a.kind===kind&&ST[a.name]==='backup_on'));
+  const stops=arr.length,orders=arr.reduce((n,s)=>n+s.tasks.length,0);
+  sum.push({pool,kind,orders,stops,av:av.length,st:st.length,fl:fl.length});
+  const pre=PFX[pool]+'-'+kind;
+  use.forEach((r,i)=>{const da=av[i];routes.push({id:pre+String(i+1).padStart(2,'0'),da:da?da.name:'',pool,kind,stops:r.stops,orders:r.orders,capS:mode==='flex'?fs:cs,r})});
+  if(fl.length<st.length){const tail=st[st.length-1];const idx=new Map();fl.forEach((r,i)=>r.stops.forEach(s=>idx.set(s.key,pre+String(i+1).padStart(2,'0'))));
+   for(const s of tail.stops)for(const t of s.tasks)over.push({t,to:idx.get(s.key),dev:(fl[fl.length-1].stops.length/cs-1)})}
+ }
+ LAST={d,routes,sum,ex,over,mode};render();
+}
+function tag(c,t){return `<span class="tag ${c}">${t}</span>`}
+function table(h,rows,num=[]){return `<div class="wrap"><table><thead><tr>${h.map((x,i)=>`<th class="${num.includes(i)?'n':''}">${x}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((x,i)=>`<td class="${num.includes(i)?'n':''}${String(x).length>60?' w':''}">${x}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
+function render(){
+ const {d,routes,sum,ex,over,mode}=LAST,cs=+$('cs').value,f=+$('cf').value;
+ const tot=k=>sum.reduce((n,s)=>n+s[k],0);
+ const kp=[['Orders',tot('orders')],['Stops',tot('stops')],['DAs available',tot('av')],['DAs needed (strict)',tot('st')],['DAs needed (flex)',tot('fl')],['Routes',routes.length],['Overflow orders',over.length],['Exceptions',ex.length]];
+ let h=`<div class="kpis">${kp.map(k=>`<div class="kpi"><b>${k[1].toLocaleString()}</b><span>${k[0]}</span></div>`).join('')}</div>`;
+ h+=`<div class="panel"><h2>Demand and DAs by emirate - ${esc(d)}</h2>`+table(['Emirate','Type','Orders','Stops','Available','Strict','Flex','Utilisation','Why'],sum.map(s=>{
+  const cap=mode==='flex'?s.fl:s.st,u=s.av?Math.round(s.stops/(s.av*cs)*100)+'%':'-';
+  const why=`${s.stops} stops / ${cs} = ${(s.stops/cs).toFixed(2)} gives ${s.st} DA${s.st>1?'s':''}; with +${f}% (${Math.floor(cs*(1+f/100))}) gives ${s.fl}. ${s.av<cap?tag('bd','Short '+(cap-s.av)):tag('ok','Covered')}`;
+  return [s.pool,s.kind==='P'?'Pickup':'Delivery',s.orders,s.stops,s.av,s.st,s.fl,u,why]}),[2,3,4,5,6,7])+`<p class="note">Orders count each task; a Pickup and Delivery order creates a seller stop and a buyer stop on the same day. Distance and duration need geocoded coordinates, so capacity is measured in stops and orders for now.</p>`;
+ const hints=[];
+ for(const s of sum){if(s.kind!=='D')continue;const need=mode==='flex'?s.fl:s.st;if(s.av<need&&ADJ[s.pool]){for(const n of ADJ[s.pool]){const o=sum.find(x=>x.pool===n.replace('*','')&&x.kind==='D');if(o){const nd=mode==='flex'?o.fl:o.st;if(o.av-nd>0)hints.push(`${s.pool} is short ${need-s.av}; ${o.pool} has ${o.av-nd} spare${n.endsWith('*')?' (only areas near Fujairah)':''}. Merge allowed, needs your approval.`)}}}}
+ if(hints.length)h+=`<p class="note">${hints.map(esc).join('<br>')}</p>`;h+='</div>';
+ h+=`<div class="panel"><details><summary>DA roster (${DA.length})</summary><p class="note">Set a DA on week off to Back-Up DA and choose whether the back-up works today.</p>`+table(['DA','Emirate','Vendor','Type','Status'],DA.map(a=>[esc(a.name),esc(a.em)+(a.shared?' (shared with Al Ain)':''),esc(a.vendor),a.kind==='P'?'Pickup':'Delivery',`<select data-da="${esc(a.name)}"><option value="active"${ST[a.name]==='active'?' selected':''}>Active</option><option value="backup_off"${ST[a.name]==='backup_off'?' selected':''}>Back-Up DA (week off)</option><option value="backup_on"${ST[a.name]==='backup_on'?' selected':''}>Back-Up DA (working today)</option></select>`]))+'</details></div>';
+ h+=`<div class="panel"><h2>Routes (${mode==='flex'?'flexible':'strict'})</h2>`+table(['Route','DA','Orders','Stops','Load','Status','Areas (in stop order)'],routes.map(r=>{
+  const p=r.stops/r.capS;const st=!r.da?tag('bd','Needs DA'):r.stops>cs?tag('wn','Over cap, within flex'):p>=.9?tag('ac','Near capacity'):tag('ok','Optimized');
+  const z=[...new Set(r.r.stops.map(s=>s.zone||s.area))];return [r.id,esc(r.da)||'-',r.orders,r.stops,Math.round(p*100)+'%',st,esc(z.slice(0,5).join(', ')+(z.length>5?' +'+(z.length-5):''))]}),[2,3,4])+'</div>';
+ h+=`<div class="panel"><h2>Additional orders</h2>`+(over.length?table(['AWB','Area','Channel','Order type','Merge into (flexible plan)','Stops vs cap'],over.map(o=>[esc(o.t.awb),esc(o.t.area),esc(o.t.ch),esc(o.t.ot),o.to,'+'+Math.round(o.dev*100)+'%']))+`<p class="note">These orders sit on a last strict route that the flexible plan removes, saving a DA.</p>`:'<p class="note">Strict and flexible plans need the same number of routes, so nothing is waiting to merge.</p>')+'</div>';
+ const by={};ex.forEach(e=>by[e.why.replace(/Zone .* vs state .* - /,'Zone and state differ - ').replace(/Attempt \d+/,'Attempt over 3')]=(by[e.why.replace(/Zone .* vs state .* - /,'Zone and state differ - ').replace(/Attempt \d+/,'Attempt over 3')]||0)+1);
+ h+=`<div class="panel"><h2>Exceptions</h2><p>${Object.entries(by).map(([k,v])=>tag('wn',esc(k)+': '+v)).join(' ')||'None.'}</p>`+(ex.length?table(['AWB','Emirate pool','Area','Reason'],ex.slice(0,150).map(e=>[esc(e.t.awb),esc(e.t.pool||'Unresolved'),esc(e.t.area),esc(e.why)]))+(ex.length>150?`<p class="note">Showing 150 of ${ex.length}. The export has all of them.</p>`:''):'')+'</div>';
+ $('out').innerHTML=h;$('exp').disabled=false;
+ $('out').querySelectorAll('select[data-da]').forEach(s=>s.onchange=()=>{ST[s.dataset.da]=s.value;run();document.querySelector('details').open=true});
+}
+$('exp').onclick=async()=>{
+ if(!LAST)return;const {d,routes,sum,ex,over}=LAST,wb=XLSX.utils.book_new(),add=(n,a)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),n);
+ const rp=[['Route','DA','Seq','AWB','Order ID','Pool','Zone','Area','Address','Channel','Order Type','Attempt','Task']];
+ routes.forEach(r=>r.r.stops.forEach((s,i)=>s.tasks.forEach(t=>rp.push([r.id,r.da||'Needs DA',i+1,t.awb,t.oid,t.pool,t.zone,t.area,t.addr,t.ch,t.ot,t.att,t.kind==='P'?'Pickup':'Delivery']))));
+ add('Route Plan',rp);
+ add('Route Summary',[['Route','DA','Pool','Orders','Stops','Type']].concat(routes.map(r=>[r.id,r.da||'Needs DA',r.pool,r.orders,r.stops,r.kind==='P'?'Pickup':'Delivery'])));
+ add('Emirate Summary',[['Emirate','Type','Orders','Stops','Available DAs','Strict DAs','Flex DAs']].concat(sum.map(s=>[s.pool,s.kind==='P'?'Pickup':'Delivery',s.orders,s.stops,s.av,s.st,s.fl])));
+ add('Additional Orders',[['AWB','Area','Channel','Merge into']].concat(over.map(o=>[o.t.awb,o.t.area,o.t.ch,o.to])));
+ add('Exceptions',[['AWB','Date','Pool','Area','Reason']].concat(ex.map(e=>[e.t.awb,e.t.d,e.t.pool||'Unresolved',e.t.area,e.why])));
+ const fn=`route-plan-${d}.xlsx`;if(!DLN){XLSX.writeFile(wb,fn);return}
+ try{await DLN.save({filename:fn,data:new Blob([XLSX.write(wb,{bookType:'xlsx',type:'array'})])})}catch(e){if(e.code!=='declined')$('msg').textContent='Export failed: '+(e.message||e.code)}
+};
+</script></body></html>
